@@ -1,0 +1,74 @@
+name: 'Sonar Analysis'
+description: 'Run SonarQube analysis and enforce the quality gate'
+
+inputs:
+  sonar-host-url:
+    description: 'SonarQube server URL'
+    required: false
+    default: 'https://sonarcloud.io'
+  sonar-token:
+    description: 'SonarQube authentication token'
+    required: true
+  sonar-project-key:
+    description: 'SonarQube project key'
+    required: true
+  sonar-project-name:
+    description: 'SonarQube project display name'
+    required: true
+  sonar-organization:
+    description: 'SonarQube Cloud organization key (required for SonarQube Cloud)'
+    required: false
+    default: ''
+  java-version:
+    description: 'Java version to use'
+    required: false
+    default: '21'
+  working-directory:
+    description: 'Directory containing the Maven project (pom.xml)'
+    required: false
+    default: '.'
+
+outputs:
+  quality-gate-status:
+    description: 'Result of the Sonar quality gate (PASSED or FAILED)'
+    value: ${{ steps.sonar.outputs.status }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Java
+      uses: actions/setup-java@8df1039502a15bceb9433410b1a100fbe190c53a # v4
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.java-version }}
+        cache: maven
+
+    - name: Run Sonar analysis with quality gate
+      id: sonar
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+      run: |
+        ORG_FLAG=""
+        if [ -n "${{ inputs.sonar-organization }}" ]; then
+          ORG_FLAG="-Dsonar.organization=${{ inputs.sonar-organization }}"
+        fi
+
+        set +e
+        ./mvnw --batch-mode sonar:sonar \
+          -Dsonar.projectKey="${{ inputs.sonar-project-key }}" \
+          -Dsonar.projectName="${{ inputs.sonar-project-name }}" \
+          -Dsonar.host.url="${{ inputs.sonar-host-url }}" \
+          -Dsonar.qualitygate.wait=true \
+          $ORG_FLAG
+        EXIT_CODE=$?
+        set -e
+
+        if [ $EXIT_CODE -eq 0 ]; then
+          echo "status=PASSED" >> "$GITHUB_OUTPUT"
+        else
+          echo "status=FAILED" >> "$GITHUB_OUTPUT"
+          exit $EXIT_CODE
+        fi

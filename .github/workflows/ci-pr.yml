@@ -1,0 +1,88 @@
+name: CI - Pull Request
+
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'Java version to use'
+        type: string
+        default: '21'
+      sonar-project-key:
+        description: 'SonarQube project key'
+        type: string
+        required: true
+      sonar-project-name:
+        description: 'SonarQube project display name'
+        type: string
+        required: true
+      sonar-organization:
+        description: 'SonarQube Cloud organization key'
+        type: string
+        default: ''
+      sonar-host-url:
+        description: 'SonarQube server URL'
+        type: string
+        default: 'https://sonarcloud.io'
+      jacoco-threshold:
+        description: 'Minimum line coverage percentage required (0-100)'
+        type: string
+        default: '70'
+      working-directory:
+        description: 'Directory containing the Maven project (pom.xml)'
+        type: string
+        default: '.'
+    secrets:
+      sonar-token:
+        description: 'SonarQube authentication token'
+        required: true
+    outputs:
+      coverage-percentage:
+        description: 'JaCoCo line coverage percentage'
+        value: ${{ jobs.verify.outputs.coverage-percentage }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      coverage-percentage: ${{ steps.maven.outputs.coverage-percentage }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Maven verify (tests + coverage check)
+        id: maven
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/maven-verify@main
+        with:
+          java-version: ${{ inputs.java-version }}
+          jacoco-threshold: ${{ inputs.jacoco-threshold }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Sonar analysis + quality gate
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/sonar-analysis@main
+        with:
+          sonar-host-url: ${{ inputs.sonar-host-url }}
+          sonar-token: ${{ secrets.sonar-token }}
+          sonar-project-key: ${{ inputs.sonar-project-key }}
+          sonar-project-name: ${{ inputs.sonar-project-name }}
+          sonar-organization: ${{ inputs.sonar-organization }}
+          java-version: ${{ inputs.java-version }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa9 # v4
+        with:
+          name: test-results
+          path: ${{ inputs.working-directory }}/target/surefire-reports/
+          if-no-files-found: ignore
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa9 # v4
+        with:
+          name: coverage-reports
+          path: ${{ inputs.working-directory }}/target/site/jacoco/
+          if-no-files-found: ignore

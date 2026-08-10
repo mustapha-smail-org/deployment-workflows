@@ -1,0 +1,167 @@
+name: CI - Main
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Service name (used for image repo path and CD dispatch)'
+        type: string
+        required: true
+      java-version:
+        description: 'Java version to use'
+        type: string
+        default: '21'
+      sonar-project-key:
+        description: 'SonarQube project key'
+        type: string
+        required: true
+      sonar-project-name:
+        description: 'SonarQube project display name'
+        type: string
+        required: true
+      sonar-organization:
+        description: 'SonarQube Cloud organization key'
+        type: string
+        default: ''
+      sonar-host-url:
+        description: 'SonarQube server URL'
+        type: string
+        default: 'https://sonarcloud.io'
+      jacoco-threshold:
+        description: 'Minimum line coverage percentage required (0-100)'
+        type: string
+        default: '70'
+      working-directory:
+        description: 'Directory containing the Maven project (pom.xml)'
+        type: string
+        default: '.'
+      image-registry:
+        description: 'Container registry hostname'
+        type: string
+        default: 'ghcr.io'
+      dockerfile-path:
+        description: 'Path to the Dockerfile'
+        type: string
+        default: './Dockerfile'
+      automation-app-id:
+        description: 'GitHub App ID used for cross-repo dispatch'
+        type: string
+        required: true
+      service-cd-repository:
+        description: 'Full owner/repo of the service CD repository. Defaults to <service-name>-cd in the same owner.'
+        type: string
+        default: ''
+      cd-environment:
+        description: 'Target environment to deploy on a default-branch build'
+        type: string
+        default: 'dev'
+    secrets:
+      sonar-token:
+        description: 'SonarQube authentication token'
+        required: true
+      automation-app-private-key:
+        description: 'GitHub App private key (PEM, base64-encoded not required)'
+        required: true
+    outputs:
+      image-digest:
+        description: 'Immutable OCI digest of the pushed image'
+        value: ${{ jobs.image.outputs.image-digest }}
+      image-tags:
+        description: 'Tags applied to the pushed image'
+        value: ${{ jobs.image.outputs.image-tags }}
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: ci-main-${{ inputs.service-name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Maven verify (tests + coverage check)
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/maven-verify@main
+        with:
+          java-version: ${{ inputs.java-version }}
+          jacoco-threshold: ${{ inputs.jacoco-threshold }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Sonar analysis + quality gate
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/sonar-analysis@main
+        with:
+          sonar-host-url: ${{ inputs.sonar-host-url }}
+          sonar-token: ${{ secrets.sonar-token }}
+          sonar-project-key: ${{ inputs.sonar-project-key }}
+          sonar-project-name: ${{ inputs.sonar-project-name }}
+          sonar-organization: ${{ inputs.sonar-organization }}
+          java-version: ${{ inputs.java-version }}
+          working-directory: ${{ inputs.working-directory }}
+
+  image:
+    needs: verify
+    runs-on: ubuntu-latest
+    outputs:
+      image-digest: ${{ steps.build.outputs.image-digest }}
+      image-tags: ${{ steps.build.outputs.image-tags }}
+      image-repository: ${{ steps.build.outputs.image-repository }}
+      short-sha: ${{ steps.sha.outputs.short }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=sha-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        id: build
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/docker-build-push@main
+        with:
+          service-name: ${{ inputs.service-name }}
+          registry: ${{ inputs.image-registry }}
+          image-tag-sha: ${{ steps.sha.outputs.short }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          dockerfile-path: ${{ inputs.dockerfile-path }}
+          build-context: ${{ inputs.working-directory }}
+
+  deploy-dev:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve target CD repository
+        id: cd-repo
+        run: |
+          REPO="${{ inputs.service-cd-repository }}"
+          if [ -z "$REPO" ]; then
+            REPO="${{ github.repository_owner }}/${{ inputs.service-name }}-cd"
+          fi
+          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
+
+      - name: Obtain GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@a8d616148505b5069dccd32f177bb87a7f29b3f1 # v1
+        with:
+          app-id: ${{ inputs.automation-app-id }}
+          private-key: ${{ secrets.automation-app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ inputs.service-name }}-cd
+
+      - name: Dispatch CD deployment
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh workflow run deploy.yml \
+            --repo "${{ steps.cd-repo.outputs.repo }}" \
+            --ref main \
+            -f environment="${{ inputs.cd-environment }}" \
+            -f image_digest="${{ needs.image.outputs.image-digest }}" \
+            -f source_commit="${{ github.sha }}" \
+            -f image_tag="${{ needs.image.outputs.short-sha }}"

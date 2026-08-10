@@ -1,0 +1,135 @@
+name: CI - Release
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Service name (used for image repo path and CD dispatch)'
+        type: string
+        required: true
+      image-registry:
+        description: 'Container registry hostname'
+        type: string
+        default: 'ghcr.io'
+      automation-app-id:
+        description: 'GitHub App ID used for cross-repo dispatch'
+        type: string
+        required: true
+      service-cd-repository:
+        description: 'Full owner/repo of the service CD repository. Defaults to <service-name>-cd in the same owner.'
+        type: string
+        default: ''
+      cd-environment:
+        description: 'Target environment to promote to on a release tag'
+        type: string
+        default: 'staging'
+      default-branch:
+        description: 'Protected default branch the tagged commit must be reachable from'
+        type: string
+        default: 'main'
+    secrets:
+      automation-app-private-key:
+        description: 'GitHub App private key (PEM)'
+        required: true
+    outputs:
+      image-digest:
+        description: 'Immutable OCI digest promoted by this release'
+        value: ${{ jobs.promote.outputs.image-digest }}
+
+permissions:
+  contents: read
+  packages: read
+  id-token: write
+
+jobs:
+  resolve-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      commit-sha: ${{ steps.extract.outputs.commit_sha }}
+      short-sha: ${{ steps.extract.outputs.short_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract commit SHA from tag
+        id: extract
+        run: |
+          COMMIT_SHA=$(git rev-list -n 1 "${{ github.ref }}")
+          echo "commit_sha=${COMMIT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=sha-$(echo ${COMMIT_SHA} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag is reachable from default branch
+        run: |
+          git fetch origin ${{ inputs.default-branch }}
+          if ! git merge-base --is-ancestor "${{ steps.extract.outputs.commit_sha }}" "origin/${{ inputs.default-branch }}"; then
+            echo "::error::Tagged commit is not reachable from ${{ inputs.default-branch }}. Refusing to release."
+            exit 1
+          fi
+
+  promote:
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    outputs:
+      image-digest: ${{ steps.retag.outputs.digest }}
+    steps:
+      - name: Resolve image repository
+        id: repo
+        run: |
+          NAMESPACE=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "image-repository=${{ inputs.image-registry }}/${NAMESPACE}/${{ inputs.service-name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to registry
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3
+        with:
+          registry: ${{ inputs.image-registry }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install crane
+        uses: imjasonh/setup-crane@31b88efe9de28ae0ffa220711af4b60be9435f6e # v0.4
+
+      - name: Resolve existing digest and re-tag (no rebuild)
+        id: retag
+        run: |
+          REPO="${{ steps.repo.outputs.image-repository }}"
+          SOURCE_TAG="${{ needs.resolve-tag.outputs.short-sha }}"
+          DIGEST=$(crane digest "${REPO}:${SOURCE_TAG}")
+          echo "Resolved ${REPO}:${SOURCE_TAG} -> ${DIGEST}"
+          crane tag "${REPO}@${DIGEST}" "${{ github.ref_name }}"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+  dispatch-promotion:
+    needs: [resolve-tag, promote]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve target CD repository
+        id: cd-repo
+        run: |
+          REPO="${{ inputs.service-cd-repository }}"
+          if [ -z "$REPO" ]; then
+            REPO="${{ github.repository_owner }}/${{ inputs.service-name }}-cd"
+          fi
+          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
+
+      - name: Obtain GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@a8d616148505b5069dccd32f177bb87a7f29b3f1 # v1
+        with:
+          app-id: ${{ inputs.automation-app-id }}
+          private-key: ${{ secrets.automation-app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ inputs.service-name }}-cd
+
+      - name: Dispatch CD promotion
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh workflow run deploy.yml \
+            --repo "${{ steps.cd-repo.outputs.repo }}" \
+            --ref main \
+            -f environment="${{ inputs.cd-environment }}" \
+            -f image_digest="${{ needs.promote.outputs.image-digest }}" \
+            -f source_commit="${{ needs.resolve-tag.outputs.commit-sha }}" \
+            -f image_tag="${{ github.ref_name }}"

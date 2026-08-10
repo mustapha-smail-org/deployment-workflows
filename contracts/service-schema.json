@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/mustapha-smail-org/deployment-workflows/contracts/service-schema.json",
+  "title": "ServiceDeployment",
+  "description": "Schema for service.yaml in a service CD repository.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "delivery.citypulse.io/v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "ServiceDeployment"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "owner"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "owner": {
+          "type": "string"
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": ["provider", "imageRepository", "health"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["render", "kubernetes", "aws-ecs"]
+        },
+        "imageRepository": {
+          "type": "string"
+        },
+        "health": {
+          "type": "object",
+          "required": ["path", "timeoutSeconds"],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "timeoutSeconds": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

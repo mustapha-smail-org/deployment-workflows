@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/mustapha-smail-org/deployment-workflows/contracts/environment-schema.json",
+  "title": "EnvironmentDesiredState",
+  "description": "Schema for environments/<env>.yaml in a service CD repository.",
+  "type": "object",
+  "required": ["environment", "image", "source", "provider"],
+  "additionalProperties": false,
+  "properties": {
+    "environment": {
+      "type": "string",
+      "enum": ["dev", "staging", "production"]
+    },
+    "image": {
+      "type": "object",
+      "required": ["tag", "digest"],
+      "additionalProperties": false,
+      "properties": {
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["repository", "commit"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[^/]+/[^/]+$"
+        },
+        "commit": {
+          "type": "string",
+          "minLength": 7
+        }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "required": ["serviceId"],
+      "additionalProperties": false,
+      "properties": {
+        "serviceId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

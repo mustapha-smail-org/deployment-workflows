@@ -1,0 +1,175 @@
+name: Deploy - Render
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Service name (for logging/summary only)'
+        type: string
+        required: true
+      environment:
+        description: 'Target environment (dev, staging, production)'
+        type: string
+        required: true
+      image-repository:
+        description: 'Full image repository path (e.g. ghcr.io/org/service)'
+        type: string
+        required: true
+      image-digest:
+        description: 'Immutable OCI image digest to deploy (sha256:...)'
+        type: string
+        required: true
+      service-id:
+        description: 'Render service ID to deploy'
+        type: string
+        required: true
+      health-check-url:
+        description: 'Base URL used for post-deploy health verification'
+        type: string
+        required: false
+        default: ''
+      health-check-path:
+        description: 'Health check path appended to health-check-url'
+        type: string
+        default: '/actuator/health/readiness'
+      deploy-timeout-seconds:
+        description: 'Maximum time to wait for the Render deployment to stabilize'
+        type: string
+        default: '300'
+    secrets:
+      render-api-key:
+        description: 'Render API key'
+        required: true
+    outputs:
+      deployment-status:
+        description: 'Result of the deployment (success or failed)'
+        value: ${{ jobs.deploy.outputs.deployment-status }}
+      deployment-id:
+        description: 'Render deployment ID'
+        value: ${{ jobs.deploy.outputs.deployment-id }}
+      deployment-url:
+        description: 'Render dashboard URL for this deployment'
+        value: ${{ jobs.deploy.outputs.deployment-url }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.service-name }}-${{ inputs.environment }}
+  cancel-in-progress: ${{ inputs.environment == 'dev' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      deployment-status: ${{ steps.summary.outputs.status }}
+      deployment-id: ${{ steps.trigger.outputs.deploy_id }}
+      deployment-url: https://dashboard.render.com/web/${{ inputs.service-id }}
+    steps:
+      - name: Validate inputs
+        run: |
+          if [[ ! "${{ inputs.image-digest }}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::image-digest must be an immutable sha256 digest, got: ${{ inputs.image-digest }}"
+            exit 1
+          fi
+          if [ -z "${{ inputs.service-id }}" ]; then
+            echo "::error::service-id is required"
+            exit 1
+          fi
+
+      - name: Trigger Render deployment
+        id: trigger
+        env:
+          RENDER_API_KEY: ${{ secrets.render-api-key }}
+        run: |
+          RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
+            "https://api.render.com/v1/services/${{ inputs.service-id }}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"imageUrl\": \"${{ inputs.image-repository }}@${{ inputs.image-digest }}\"}")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" -ge 300 ]; then
+            echo "::error::Render API returned HTTP ${HTTP_CODE}: ${BODY}"
+            exit 1
+          fi
+
+          DEPLOY_ID=$(echo "$BODY" | grep -o '"id":"[^"]*"' | head -n1 | cut -d'"' -f4)
+          echo "deploy_id=${DEPLOY_ID}" >> "$GITHUB_OUTPUT"
+          echo "Triggered Render deployment ${DEPLOY_ID} for service ${{ inputs.service-id }}"
+
+      - name: Wait for deployment to stabilize
+        id: wait
+        env:
+          RENDER_API_KEY: ${{ secrets.render-api-key }}
+        run: |
+          DEPLOY_ID="${{ steps.trigger.outputs.deploy_id }}"
+          TIMEOUT=${{ inputs.deploy-timeout-seconds }}
+          ELAPSED=0
+          INTERVAL=10
+
+          while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+            STATUS=$(curl -sS \
+              "https://api.render.com/v1/services/${{ inputs.service-id }}/deploys/${DEPLOY_ID}" \
+              -H "Authorization: Bearer ${RENDER_API_KEY}" | grep -o '"status":"[^"]*"' | head -n1 | cut -d'"' -f4)
+
+            echo "Deployment status: ${STATUS} (elapsed ${ELAPSED}s)"
+
+            if [ "$STATUS" = "live" ]; then
+              echo "Deployment reached stable state."
+              exit 0
+            fi
+
+            if [ "$STATUS" = "build_failed" ] || [ "$STATUS" = "update_failed" ] || [ "$STATUS" = "canceled" ]; then
+              echo "::error::Render deployment failed with status: ${STATUS}"
+              exit 1
+            fi
+
+            sleep "$INTERVAL"
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+
+          echo "::error::Timed out after ${TIMEOUT}s waiting for deployment to stabilize"
+          exit 1
+
+      - name: Verify application health
+        if: inputs.health-check-url != ''
+        run: |
+          URL="${{ inputs.health-check-url }}${{ inputs.health-check-path }}"
+          echo "Checking health endpoint: ${URL}"
+          for i in $(seq 1 10); do
+            if curl -sSf "$URL" > /dev/null; then
+              echo "Health check passed."
+              exit 0
+            fi
+            echo "Health check attempt ${i} failed, retrying..."
+            sleep 6
+          done
+          echo "::error::Health check failed after 10 attempts: ${URL}"
+          exit 1
+
+      - name: Emit deployment summary
+        id: summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            STATUS="success"
+          else
+            STATUS="failed"
+          fi
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Deployment Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Service | ${{ inputs.service-name }} |"
+            echo "| Environment | ${{ inputs.environment }} |"
+            echo "| Image | ${{ inputs.image-repository }}@${{ inputs.image-digest }} |"
+            echo "| Render Service ID | ${{ inputs.service-id }} |"
+            echo "| Render Deploy ID | ${{ steps.trigger.outputs.deploy_id }} |"
+            echo "| Status | ${STATUS} |"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,70 @@
+name: 'Maven Verify'
+description: 'Run Maven build, unit/integration tests, and JaCoCo coverage check'
+
+inputs:
+  java-version:
+    description: 'Java version to use'
+    required: false
+    default: '21'
+  java-distribution:
+    description: 'Java distribution'
+    required: false
+    default: 'temurin'
+  jacoco-threshold:
+    description: 'Minimum line coverage ratio required (0-100)'
+    required: false
+    default: '70'
+  working-directory:
+    description: 'Directory containing the Maven project (pom.xml)'
+    required: false
+    default: '.'
+
+outputs:
+  coverage-percentage:
+    description: 'Line coverage percentage reported by JaCoCo'
+    value: ${{ steps.coverage.outputs.percentage }}
+  test-results-path:
+    description: 'Path to surefire test reports'
+    value: ${{ inputs.working-directory }}/target/surefire-reports
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Java
+      uses: actions/setup-java@8df1039502a15bceb9433410b1a100fbe190c53a # v4
+      with:
+        distribution: ${{ inputs.java-distribution }}
+        java-version: ${{ inputs.java-version }}
+        cache: maven
+
+    - name: Run Maven verify
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        RATIO=$(echo "scale=2; ${{ inputs.jacoco-threshold }} / 100" | bc -l)
+        ./mvnw --batch-mode clean verify -Djacoco.line.coverage.minimum="${RATIO}"
+
+    - name: Extract JaCoCo coverage percentage
+      id: coverage
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        REPORT="target/site/jacoco/jacoco.xml"
+        if [ -f "$REPORT" ]; then
+          COVERED=$(grep -m1 '<counter type="LINE"' "$REPORT" | grep -oE 'covered="[0-9]+"' | grep -oE '[0-9]+')
+          MISSED=$(grep -m1 '<counter type="LINE"' "$REPORT" | grep -oE 'missed="[0-9]+"' | grep -oE '[0-9]+')
+          if [ -n "$COVERED" ] && [ -n "$MISSED" ]; then
+            TOTAL=$((COVERED + MISSED))
+            if [ "$TOTAL" -gt 0 ]; then
+              PERCENTAGE=$(echo "scale=2; $COVERED * 100 / $TOTAL" | bc -l)
+            else
+              PERCENTAGE="0"
+            fi
+          else
+            PERCENTAGE="unknown"
+          fi
+        else
+          PERCENTAGE="unknown"
+        fi
+        echo "percentage=${PERCENTAGE}" >> "$GITHUB_OUTPUT"
+        echo "JaCoCo line coverage: ${PERCENTAGE}%"
