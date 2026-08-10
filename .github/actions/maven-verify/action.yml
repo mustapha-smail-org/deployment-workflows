@@ -51,8 +51,9 @@ runs:
       run: |
         REPORT="target/site/jacoco/jacoco.xml"
         if [ -f "$REPORT" ]; then
-          COVERED=$(grep -m1 '<counter type="LINE"' "$REPORT" | grep -oE 'covered="[0-9]+"' | grep -oE '[0-9]+')
-          MISSED=$(grep -m1 '<counter type="LINE"' "$REPORT" | grep -oE 'missed="[0-9]+"' | grep -oE '[0-9]+')
+          LAST_LINE_COUNTER=$(grep -oE '<counter type="LINE" missed="[0-9]+" covered="[0-9]+"/>' "$REPORT" | tail -1)
+          COVERED=$(echo "$LAST_LINE_COUNTER" | grep -oE 'covered="[0-9]+"' | grep -oE '[0-9]+')
+          MISSED=$(echo "$LAST_LINE_COUNTER" | grep -oE 'missed="[0-9]+"' | grep -oE '[0-9]+')
           if [ -n "$COVERED" ] && [ -n "$MISSED" ]; then
             TOTAL=$((COVERED + MISSED))
             if [ "$TOTAL" -gt 0 ]; then
