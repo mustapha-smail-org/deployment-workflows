@@ -35,7 +35,12 @@ JaCoCo threshold violations because the check is bound to the `verify` phase.
 
 ### `.github/actions/sonar-analysis`
 
-Runs `mvnw sonar:sonar` and blocks on the quality gate.
+Runs the Sonar Maven plugin by fully-qualified coordinates
+(`org.sonarsource.scanner.maven:sonar-maven-plugin:<version>:sonar`) and blocks on
+the quality gate. Deliberately **not** invoked via the `sonar:` prefix shorthand —
+that shorthand only resolves if the plugin is already declared in the calling
+project's `pom.xml`, which would force every onboarded service to add it. Calling by
+full coordinates keeps this a zero-pom.xml-changes template.
 
 | Input | Required | Default |
 |---|---|---|
@@ -46,6 +51,7 @@ Runs `mvnw sonar:sonar` and blocks on the quality gate.
 | `sonar-organization` | no | `''` (omit `-Dsonar.organization` if blank) |
 | `java-version` | no | `21` |
 | `working-directory` | no | `.` |
+| `sonar-plugin-version` | no | `5.7.0.6970` (latest stable on Maven Central at time of writing) |
 
 | Output | Description |
 |---|---|
