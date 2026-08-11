@@ -98,7 +98,7 @@ jobs:
   release:
     permissions:
       contents: read
-      packages: read
+      packages: write
       id-token: write
     uses: mustapha-smail-org/deployment-workflows/.github/workflows/ci-release.yml@main
     with:
@@ -118,6 +118,14 @@ default token permissions instead of declaring its own `permissions:` block. Eac
 `with:`/`uses:` job above must declare a `permissions:` block that matches (or
 exceeds) the `permissions:` the target reusable workflow itself declares — see
 `WORKFLOW_CONTRACTS.md` for what each one requires.
+
+**`release.yml` needs `packages: write`, not `read`:** counterintuitively, even
+though the release flow never rebuilds or uploads new image layers, `crane tag`
+still performs a manifest `PUT` to attach the new semver tag to the existing
+digest — and GHCR requires write/push permission for any operation that creates
+or moves a tag, regardless of whether new blob content is involved. `packages:
+read` here fails at runtime (not parse time) with
+`DENIED: installation not allowed to Write organization package`.
 
 ---
 

@@ -38,7 +38,7 @@ on:
 
 permissions:
   contents: read
-  packages: read
+  packages: write
   id-token: write
 
 jobs:

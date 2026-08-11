@@ -107,7 +107,7 @@ jobs:
   release:
     permissions:
       contents: read
-      packages: read
+      packages: write
       id-token: write
     uses: ${TEMPLATES_REPO}/.github/workflows/ci-release.yml@${TEMPLATES_REF}
     with:

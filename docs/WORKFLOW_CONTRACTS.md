@@ -145,6 +145,13 @@ environment defaults to `staging`).
 
 **Outputs:** `image-digest`.
 
+**Permissions granted:** `contents: read`, `packages: write`, `id-token: write`.
+`packages: write` — not `read` — despite never rebuilding: `crane tag` performs a
+manifest `PUT` to attach the semver tag to the existing digest, and GHCR requires
+write/push permission for any tag-creating operation regardless of whether new
+blob content is uploaded. `packages: read` fails at runtime (not parse time) with
+`DENIED: installation not allowed to Write organization package`.
+
 **Invariant enforced:** if the tagged commit isn't reachable from `default-branch`,
 or the `sha-<short-sha>` image doesn't already exist in the registry, the job fails
 loudly rather than silently rebuilding.
