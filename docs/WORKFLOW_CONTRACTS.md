@@ -167,6 +167,11 @@ Sequence: validate inputs → trigger Render deploy via API with the image diges
 poll for `live` status (fail on `build_failed`/`update_failed`/`canceled`/timeout) →
 optional HTTP health check → emit job summary.
 
+Deliberately does **not** know anything about config files, secrets, or per-service
+config — this workflow is purely a generic image-deployment adapter, identical for
+every caller regardless of how many secrets a service has. See "Externalized app
+config" below and `TEMPLATE_GUIDE.md` for where that concern actually lives.
+
 **Inputs:** `service-name` (required), `environment` (required), `image-repository`
 (required), `image-digest` (required, must match `^sha256:[a-f0-9]{64}$`),
 `health-check-url` (optional — skips the health step if blank), `health-check-path`
@@ -218,6 +223,59 @@ This `&&`/`||` chain is GitHub Actions' idiomatic substitute for a ternary/switc
 scalars (`>-`) can leave embedded newlines inside the `${{ }}` expression when the
 content is indented deeper than the scalar's base level, which is an unnecessary
 risk for something this easy to keep on one line.
+
+---
+
+## Externalized App Config
+
+Not a reusable workflow — a pattern each service's own CD repo implements itself,
+because the number and names of secrets a service needs is unbounded and inherently
+service-specific. `deploy-render.yml` deliberately has no knowledge of this at all.
+
+**The constraint driving the design:** GitHub Actions never lets a script look up
+`secrets.<name>` using a name discovered at runtime (e.g. by reading a placeholder
+out of a file) — every secret a script touches must be named explicitly in a
+workflow file, at authoring time. There's no way around this, so the goal is to
+make the *unavoidable* per-secret enumeration as cheap as possible, and keep
+everything else generic.
+
+**The pattern** (reference implementation: `data-ingestion-cd/config/*.yaml` +
+`data-ingestion-cd/.github/workflows/deploy.yml`'s `push-config` job):
+
+1. A tracked, per-environment config file (e.g. `config/dev.yaml`) holds normal
+   operational config directly, and represents secret values with a
+   `%%SECRET:NAME%%` token instead of a real value.
+2. A dedicated job in the service's own `deploy.yml` declares one `env:` line per
+   secret the service needs — `SECRET_KAFKA_USERNAME: ${{ ... }}`, etc., typically
+   resolved per-environment via the same `&&`/`||` pattern as `service-id`. This is
+   the only part that grows with secret count, and it's pure boilerplate, not logic.
+3. A **generic** bash loop iterates over whatever `SECRET_*` env vars happen to be
+   set and substitutes matching tokens — `for VAR_NAME in $(compgen -v | grep
+   '^SECRET_')`. This loop never changes regardless of whether the service has 4
+   secrets or 100; adding a secret is exactly one new `env:` line.
+4. A check for any remaining `%%SECRET:...%%` token after substitution fails the
+   job loudly, rather than pushing a broken placeholder to Render as if it were a
+   real value.
+5. The resolved content is pushed to Render's Secret Files API (`PUT
+   /v1/services/{id}/secret-files/{name}`) **immediately, in the same script, same
+   step** — never exposed as a job output. This is the same masked-output-blanking
+   hazard described above; resolving and using a secret-derived value must happen
+   together in one place, never split across a job boundary.
+
+**Why this isn't a shared composite action or reusable workflow:** any such
+abstraction would still need a fixed, pre-declared `inputs:`/`secrets:` schema — the
+same "how many secrets" ceiling this design exists to avoid, just moved to a
+different file. The only genuinely shareable part (the substitution algorithm) is
+already O(1) in service-specific lines needed to invoke it, so there's little to
+gain and a real safety cost (another job/step boundary the resolved value would
+need to cross) from trying to factor it out further.
+
+**Runtime consumption is entirely up to each service's own `Dockerfile`** — for
+Spring, `ENV SPRING_CONFIG_IMPORT=optional:file:/etc/secrets/<name>` (works for
+both `.properties` and `.yaml`, Spring picks the loader from the extension); a
+non-Spring stack would read the same fixed Render mount path
+(`/etc/secrets/<name>`) with its own config loader. `deployment-workflows` doesn't
+need to change either way.
 
 ---
 

@@ -230,6 +230,32 @@ any job output derived from a masked value once it's passed into another job's
 else changes — upgrade later by pointing `RENDER_SERVICE_ID_STAGING` at a real
 third service.
 
+**Optional: externalized config file.** A service can mount a file onto Render at
+a fixed, language-agnostic path (`/etc/secrets/<name>`) before its image deploys.
+Skip this whole section if a service doesn't need it.
+
+This is **entirely a service-specific pattern, implemented in that service's own
+`-cd` repo — not a `deploy-render.yml` capability.** The reasoning: the number and
+names of secrets a service needs is unbounded (4 today, 100 for the next service),
+and GitHub Actions requires every secret a script touches to be named explicitly
+at authoring time — there's no way to look up `secrets.<name>` dynamically from a
+name discovered at runtime. Baking any fixed "how many secrets" ceiling into the
+*shared* `deploy-render.yml` doesn't scale; each service enumerating its own,
+however many, does.
+
+See `WORKFLOW_CONTRACTS.md`'s "Externalized App Config" section for the full
+pattern and why it's structured this way, and
+`data-ingestion-cd/config/*.yaml` + its `deploy.yml`'s `push-config` job for the
+reference implementation: a tracked YAML file per environment where secret values
+are `%%SECRET:NAME%%` tokens rather than real values, resolved by a generic bash
+loop (unchanged regardless of secret count — only the `env:` block declaring each
+secret grows) and pushed to Render directly, in the same script, before the actual
+image deploy. Each service's own `Dockerfile` decides how its runtime consumes the
+mounted file — for Spring, one `ENV SPRING_CONFIG_IMPORT=optional:
+file:/etc/secrets/<name>` line (works for both `.properties` and `.yaml`, Spring
+picks the loader from the extension); a non-Spring stack would read the same
+fixed path with its own config loader.
+
 ---
 
 ## 5. CODEOWNERS
