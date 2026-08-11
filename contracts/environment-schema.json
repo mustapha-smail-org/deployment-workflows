@@ -4,7 +4,7 @@
   "title": "EnvironmentDesiredState",
   "description": "Schema for environments/<env>.yaml in a service CD repository.",
   "type": "object",
-  "required": ["environment", "image", "source", "provider"],
+  "required": ["environment", "image", "source"],
   "additionalProperties": false,
   "properties": {
     "environment": {
@@ -42,15 +42,10 @@
       }
     },
     "provider": {
+      "description": "Non-secret provider config only. Deployment target identifiers (e.g. a Render service ID) belong in repo secrets, not here — see the service CD repo's deploy.yml.",
       "type": "object",
-      "required": ["serviceId"],
       "additionalProperties": false,
-      "properties": {
-        "serviceId": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
+      "properties": {}
     }
   }
 }

@@ -162,11 +162,12 @@ optional HTTP health check → emit job summary.
 
 **Inputs:** `service-name` (required), `environment` (required), `image-repository`
 (required), `image-digest` (required, must match `^sha256:[a-f0-9]{64}$`),
-`service-id` (required, Render service ID), `health-check-url` (optional — skips the
-health step if blank), `health-check-path` (default
-`/actuator/health/readiness`), `deploy-timeout-seconds` (default `300`).
+`health-check-url` (optional — skips the health step if blank), `health-check-path`
+(default `/actuator/health/readiness`), `deploy-timeout-seconds` (default `300`).
 
-**Secrets:** `render-api-key` (required).
+**Secrets:** `render-api-key` (required), `service-id` (required, the Render service
+ID). `service-id` is a **secrets-block** input, not a plain input — see the
+"secret job outputs" trap below.
 
 **Outputs:** `deployment-status` (`success`/`failed`), `deployment-id`,
 `deployment-url`.
@@ -174,6 +175,42 @@ health step if blank), `health-check-path` (default
 **Concurrency:** `deploy-<service-name>-<environment>`. Cancels in-progress runs only
 for `dev` (newest commit wins); `staging`/`production` deployments queue instead of
 being interrupted.
+
+**Concurrency deadlock trap:** since `deploy-render.yml` is called as a job from a
+service CD repo's own `deploy.yml`, that caller's top-level `concurrency:` group
+**must not** resolve to the same string as `deploy-<service-name>-<environment>`.
+If it does, the top-level run ends up waiting on a concurrency slot it already
+holds via its own `deploy` job — GitHub Actions detects this and cancels the run
+with `Canceling since a deadlock was detected`. Give the caller's own group a
+different prefix, e.g. `cd-state-<service-name>-<environment>` (see
+`data-ingestion-cd/.github/workflows/deploy.yml` for the reference).
+
+**Secret job outputs get blanked, not passed through:** if a value is resolved in
+one job (e.g. picking the right `RENDER_SERVICE_ID_*` secret based on
+`inputs.environment` inside a `run:` step, then exposing it as a job `output`) and
+that output is then passed into a *different* job's `with:`/`secrets:` block for a
+`uses:` reusable-workflow call, GitHub Actions silently replaces it with an empty
+string the moment the value has been masked (via `::add-mask::`, or automatically
+because it originated from `secrets`). This is intentional secret-hygiene behavior,
+not a bug — job outputs are visible in the UI/API, so GitHub won't let a masked
+value flow through them into another job's visible "Inputs" section. The symptom is
+confusing: the producing step succeeds with no error, but the consuming job's
+"Inputs" log shows the value blank (e.g. `service-id: `), and the downstream step
+then fails with something like `service-id is required`.
+
+**The fix:** never route a secret through a step output → job output → another
+job's `with:`/`secrets:` chain. Do any environment-to-secret selection as a pure
+workflow *expression*, evaluated at parse time before any job runs — e.g. in the
+caller's own `secrets:` block:
+```yaml
+secrets:
+  service-id: ${{ inputs.environment == 'dev' && secrets.RENDER_SERVICE_ID_DEV || inputs.environment == 'staging' && secrets.RENDER_SERVICE_ID_STAGING || secrets.RENDER_SERVICE_ID_PRODUCTION }}
+```
+This `&&`/`||` chain is GitHub Actions' idiomatic substitute for a ternary/switch
+(there's no native `if` expression). Keep it on one line — folded YAML block
+scalars (`>-`) can leave embedded newlines inside the `${{ }}` expression when the
+content is indented deeper than the scalar's base level, which is an unnecessary
+risk for something this easy to keep on one line.
 
 ---
 

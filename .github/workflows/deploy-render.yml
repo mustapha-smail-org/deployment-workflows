@@ -19,10 +19,6 @@ on:
         description: 'Immutable OCI image digest to deploy (sha256:...)'
         type: string
         required: true
-      service-id:
-        description: 'Render service ID to deploy'
-        type: string
-        required: true
       health-check-url:
         description: 'Base URL used for post-deploy health verification'
         type: string
@@ -39,6 +35,15 @@ on:
     secrets:
       render-api-key:
         description: 'Render API key'
+        required: true
+      service-id:
+        description: >-
+          Render service ID to deploy. Deliberately a secrets-block input, not a
+          plain input: a real Render ID is effectively an access handle, and
+          GitHub Actions blanks any job output derived from a masked value when
+          it's passed through a dependent job's `with:` block — so this value
+          must flow through `secrets:` end to end, never through a step/job
+          output that gets `::add-mask::`-ed along the way.
         required: true
     outputs:
       deployment-status:
@@ -64,7 +69,10 @@ jobs:
     outputs:
       deployment-status: ${{ steps.summary.outputs.status }}
       deployment-id: ${{ steps.trigger.outputs.deploy_id }}
-      deployment-url: https://dashboard.render.com/web/${{ inputs.service-id }}
+      # Deliberately not embedding the service ID here — workflow_call outputs
+      # are a more persistent/visible surface than a log line, and service-id
+      # is a secrets-block value now (see the secrets: block above for why).
+      deployment-url: https://dashboard.render.com/
     steps:
       - name: Validate inputs
         run: |
@@ -72,7 +80,7 @@ jobs:
             echo "::error::image-digest must be an immutable sha256 digest, got: ${{ inputs.image-digest }}"
             exit 1
           fi
-          if [ -z "${{ inputs.service-id }}" ]; then
+          if [ -z "${{ secrets.service-id }}" ]; then
             echo "::error::service-id is required"
             exit 1
           fi
@@ -83,7 +91,7 @@ jobs:
           RENDER_API_KEY: ${{ secrets.render-api-key }}
         run: |
           RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST \
-            "https://api.render.com/v1/services/${{ inputs.service-id }}/deploys" \
+            "https://api.render.com/v1/services/${{ secrets.service-id }}/deploys" \
             -H "Authorization: Bearer ${RENDER_API_KEY}" \
             -H "Content-Type: application/json" \
             -d "{\"imageUrl\": \"${{ inputs.image-repository }}@${{ inputs.image-digest }}\"}")
@@ -98,7 +106,7 @@ jobs:
 
           DEPLOY_ID=$(echo "$BODY" | grep -o '"id":"[^"]*"' | head -n1 | cut -d'"' -f4)
           echo "deploy_id=${DEPLOY_ID}" >> "$GITHUB_OUTPUT"
-          echo "Triggered Render deployment ${DEPLOY_ID} for service ${{ inputs.service-id }}"
+          echo "Triggered Render deployment ${DEPLOY_ID} for service ${{ secrets.service-id }}"
 
       - name: Wait for deployment to stabilize
         id: wait
@@ -112,7 +120,7 @@ jobs:
 
           while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
             STATUS=$(curl -sS \
-              "https://api.render.com/v1/services/${{ inputs.service-id }}/deploys/${DEPLOY_ID}" \
+              "https://api.render.com/v1/services/${{ secrets.service-id }}/deploys/${DEPLOY_ID}" \
               -H "Authorization: Bearer ${RENDER_API_KEY}" | grep -o '"status":"[^"]*"' | head -n1 | cut -d'"' -f4)
 
             echo "Deployment status: ${STATUS} (elapsed ${ELAPSED}s)"
@@ -169,7 +177,7 @@ jobs:
             echo "| Service | ${{ inputs.service-name }} |"
             echo "| Environment | ${{ inputs.environment }} |"
             echo "| Image | ${{ inputs.image-repository }}@${{ inputs.image-digest }} |"
-            echo "| Render Service ID | ${{ inputs.service-id }} |"
+            echo "| Render Service ID | ${{ secrets.service-id }} |"
             echo "| Render Deploy ID | ${{ steps.trigger.outputs.deploy_id }} |"
             echo "| Status | ${STATUS} |"
           } >> "$GITHUB_STEP_SUMMARY"
