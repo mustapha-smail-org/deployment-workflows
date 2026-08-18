@@ -1,0 +1,63 @@
+name: 'Sonar Analysis (Node)'
+description: 'Run SonarQube analysis and enforce the quality gate for a Node/TypeScript project'
+
+inputs:
+  sonar-host-url:
+    description: 'SonarQube server URL'
+    required: false
+    default: 'https://sonarcloud.io'
+  sonar-token:
+    description: 'SonarQube authentication token'
+    required: true
+  sonar-project-key:
+    description: 'SonarQube project key'
+    required: true
+  sonar-project-name:
+    description: 'SonarQube project display name'
+    required: true
+  sonar-organization:
+    description: 'SonarQube Cloud organization key (required for SonarQube Cloud)'
+    required: false
+    default: ''
+  working-directory:
+    description: >-
+      Directory containing the Node project and its sonar-project.properties.
+      Structural config (sonar.sources, sonar.tests, sonar.exclusions,
+      sonar.javascript.lcov.reportPaths) lives in that file, not here — see
+      TEMPLATE_GUIDE.md. This action must run in the same job as node-verify,
+      after it: it reads the coverage/lcov.info that step produces off disk.
+    required: false
+    default: '.'
+
+outputs:
+  quality-gate-status:
+    description: 'Result of the Sonar quality gate (PASSED or FAILED)'
+    value: ${{ steps.status.outputs.status }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Run Sonar analysis with quality gate
+      id: sonar
+      uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+      env:
+        SONAR_TOKEN: ${{ inputs.sonar-token }}
+        SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
+      with:
+        projectBaseDir: ${{ inputs.working-directory }}
+        args: >
+          -Dsonar.projectKey=${{ inputs.sonar-project-key }}
+          -Dsonar.projectName=${{ inputs.sonar-project-name }}
+          ${{ inputs.sonar-organization != '' && format('-Dsonar.organization={0}', inputs.sonar-organization) || '' }}
+          -Dsonar.qualitygate.wait=true
+
+    - name: Report quality gate status
+      id: status
+      if: always()
+      shell: bash
+      run: |
+        if [ "${{ steps.sonar.outcome }}" = "success" ]; then
+          echo "status=PASSED" >> "$GITHUB_OUTPUT"
+        else
+          echo "status=FAILED" >> "$GITHUB_OUTPUT"
+        fi

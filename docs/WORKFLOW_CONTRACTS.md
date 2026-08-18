@@ -59,6 +59,89 @@ full coordinates keeps this a zero-pom.xml-changes template.
 
 ---
 
+### `.github/actions/node-verify`
+
+Installs dependencies, runs lint/format-check/typecheck, runs the test command with
+coverage, enforces the coverage threshold, and builds. The Node analogue of
+`maven-verify`.
+
+| Input | Required | Default | Notes |
+|---|---|---|---|
+| `node-version` | no | `22` | |
+| `working-directory` | no | `.` | |
+| `coverage-threshold` | no | `70` | Percentage (0-100). Unlike `maven-verify`, this is **not** passed into the test command — it's enforced by this action after the run reading `coverage/coverage-summary.json`. See TEMPLATE_GUIDE.md §3b. |
+| `install-command` | no | `npm ci` | |
+| `lint-command` | no | `npm run lint` | Set to `''` to skip. |
+| `format-check-command` | no | `npm run format:check` | Set to `''` to skip. |
+| `typecheck-command` | no | `npm run typecheck` | Set to `''` to skip. |
+| `test-command` | no | `npm run test:coverage` | Must emit `coverage/coverage-summary.json` (this action's threshold check) and `coverage/lcov.info` (`sonar-analysis-node`). |
+| `build-command` | no | `npm run build` | Set to `''` to skip. |
+
+| Output | Description |
+|---|---|
+| `coverage-percentage` | Line coverage percentage from `coverage/coverage-summary.json`'s `total.lines.pct`. |
+| `dist-path` | `<working-directory>/dist`. |
+
+Failure mode: fails if any gate command exits non-zero, or if
+`coverage-percentage < coverage-threshold`, or if `coverage-summary.json` is
+missing (a misconfigured reporter, not silently treated as 0%).
+
+---
+
+### `.github/actions/node-e2e`
+
+Installs Playwright browsers (cached by `@playwright/test` version resolved from
+`package-lock.json`) and runs the e2e suite. Does not build the app itself — the
+reference `playwright.config.ts` `webServer` builds and serves a production bundle
+as part of `test-command`, so this action stays test-runner-agnostic.
+
+| Input | Required | Default | Notes |
+|---|---|---|---|
+| `node-version` | no | `22` | |
+| `working-directory` | no | `.` | |
+| `install-command` | no | `npm ci` | |
+| `browsers` | no | `chromium webkit` | Space-separated. Must match the projects declared in `playwright.config.ts`. |
+| `test-command` | no | `npm run test:e2e` | |
+| `report-path` | no | `playwright-report` | Uploaded as an artifact on failure only. |
+| `results-path` | no | `test-results` | Uploaded as an artifact on failure only. |
+
+No outputs. Failure mode: fails if `test-command` exits non-zero; uploads the
+Playwright HTML report and `test-results/` (traces, screenshots) as artifacts when
+it does, for post-mortem without re-running.
+
+---
+
+### `.github/actions/sonar-analysis-node`
+
+Runs `SonarSource/sonarqube-scan-action` and blocks on the quality gate. Unlike
+`sonar-analysis` (Java), structural project config (`sonar.sources`, `sonar.tests`,
+`sonar.exclusions`, `sonar.javascript.lcov.reportPaths`) is **not** passed as CLI
+args here — it lives in a `sonar-project.properties` file in the target repo,
+because there's no Maven-equivalent single entry point (`pom.xml`) this action could
+read those settings from generically.
+
+| Input | Required | Default |
+|---|---|---|
+| `sonar-host-url` | no | `https://sonarcloud.io` |
+| `sonar-token` | **yes** | — |
+| `sonar-project-key` | **yes** | — |
+| `sonar-project-name` | **yes** | — |
+| `sonar-organization` | no | `''` (omit `-Dsonar.organization` if blank) |
+| `working-directory` | no | `.` — passed as `projectBaseDir`. |
+
+| Output | Description |
+|---|---|
+| `quality-gate-status` | `PASSED` or `FAILED`. The step also fails the job on `FAILED`. |
+
+**Must run in the same job as `node-verify`, after it:** this action reads
+`coverage/lcov.info` off the runner's local disk (produced by `node-verify`'s
+`test-command`). Jobs run on separate runners with no shared filesystem, so
+splitting these two across jobs doesn't error — Sonar just silently reports 0%
+coverage. `ci-pr-node.yml` / `ci-main-node.yml` already sequence this correctly
+within one job; preserve that if you extend either workflow.
+
+---
+
 ### `.github/actions/docker-build-push`
 
 Builds and pushes an image tagged by commit SHA (plus optional extra mutable tags).
@@ -124,6 +207,64 @@ in the service's CD repo, environment defaults to `dev`).
 
 **Concurrency:** `ci-main-<service-name>`, does not cancel in-progress runs (a
 default-branch build should always complete and record its artifact).
+
+---
+
+### `.github/workflows/ci-pr-node.yml`
+
+Trigger: called from a service's `pull_request` workflow. **Never publishes an
+image and never touches deployment credentials.** Node analogue of `ci-pr.yml`.
+
+Sequence: `verify` (node-verify + sonar-analysis-node, one job) and `e2e`
+(node-e2e) run **in parallel** — the e2e suite doesn't depend on the Sonar quality
+gate, so there's no reason to queue it behind that poll.
+
+**Inputs:** `node-version`, `sonar-project-key` (required), `sonar-project-name`
+(required), `sonar-organization`, `sonar-host-url`, `coverage-threshold`,
+`working-directory`, `run-e2e` (default `true`), `e2e-browsers`.
+
+**Secrets:** `sonar-token` (required).
+
+**Outputs:** `coverage-percentage`.
+
+**Permissions granted:** `contents: read` only.
+
+---
+
+### `.github/workflows/ci-main-node.yml`
+
+Trigger: called from a service's `push: branches: [main]` workflow. Node analogue
+of `ci-main.yml`.
+
+Sequence: `verify` (node-verify + sonar-analysis-node) and `e2e` (node-e2e, if
+`run-e2e`) → `image` (docker-build-push, tag `sha-<short-sha>`, waits on both
+`verify` and `e2e` — see the `if:` gate below) → `deploy-dev` (GitHub App token →
+`gh workflow run deploy.yml` in the service's CD repo, environment defaults to
+`dev`).
+
+**Inputs:** `service-name` (required), `node-version`, `sonar-project-key`
+(required), `sonar-project-name` (required), `sonar-organization`, `sonar-host-url`,
+`coverage-threshold`, `working-directory`, `run-e2e` (default **`false`** — unlike
+`ci-pr-node.yml`; a default-branch build was already gated by the PR's e2e run, so
+re-running it here would only add latency ahead of the dev deploy), `e2e-browsers`,
+`image-registry`, `dockerfile-path`, `automation-app-id` (required),
+`service-cd-repository` (defaults to `<owner>/<service-name>-cd`), `cd-environment`
+(default `dev`).
+
+**Secrets:** `sonar-token` (required), `automation-app-private-key` (required).
+
+**Outputs:** `image-digest`, `image-tags`.
+
+**Permissions granted:** `contents: read`, `packages: write`, `id-token: write`.
+
+**Concurrency:** `ci-main-<service-name>`, does not cancel in-progress runs — same
+convention as `ci-main.yml`.
+
+**`image` job's `if:` gate:** `always() && needs.verify.result == 'success' &&
+(needs.e2e.result == 'success' || needs.e2e.result == 'skipped')`. Needed because
+`e2e` is conditional on `run-e2e`; when it's `false` the job is `skipped`, not
+`success`, so a plain `needs.e2e.result == 'success'` check would block the image
+build entirely whenever e2e is turned off.
 
 ---
 

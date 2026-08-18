@@ -1,0 +1,101 @@
+name: CI - Pull Request (Node)
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version to use'
+        type: string
+        default: '22'
+      sonar-project-key:
+        description: 'SonarQube project key'
+        type: string
+        required: true
+      sonar-project-name:
+        description: 'SonarQube project display name'
+        type: string
+        required: true
+      sonar-organization:
+        description: 'SonarQube Cloud organization key'
+        type: string
+        default: ''
+      sonar-host-url:
+        description: 'SonarQube server URL'
+        type: string
+        default: 'https://sonarcloud.io'
+      coverage-threshold:
+        description: 'Minimum line coverage percentage required (0-100)'
+        type: string
+        default: '70'
+      working-directory:
+        description: 'Directory containing the Node project (package.json)'
+        type: string
+        default: '.'
+      run-e2e:
+        description: 'Whether to run the Playwright e2e suite'
+        type: boolean
+        default: true
+      e2e-browsers:
+        description: 'Space-separated Playwright browsers to install (must match playwright.config.ts projects)'
+        type: string
+        default: 'chromium webkit'
+    secrets:
+      sonar-token:
+        description: 'SonarQube authentication token'
+        required: true
+    outputs:
+      coverage-percentage:
+        description: 'Line coverage percentage'
+        value: ${{ jobs.verify.outputs.coverage-percentage }}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      coverage-percentage: ${{ steps.node.outputs.coverage-percentage }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Node verify (lint, typecheck, tests + coverage check, build)
+        id: node
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/node-verify@main
+        with:
+          node-version: ${{ inputs.node-version }}
+          coverage-threshold: ${{ inputs.coverage-threshold }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Sonar analysis + quality gate
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/sonar-analysis-node@main
+        with:
+          sonar-host-url: ${{ inputs.sonar-host-url }}
+          sonar-token: ${{ secrets.sonar-token }}
+          sonar-project-key: ${{ inputs.sonar-project-key }}
+          sonar-project-name: ${{ inputs.sonar-project-name }}
+          sonar-organization: ${{ inputs.sonar-organization }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-report
+          path: ${{ inputs.working-directory }}/coverage/
+          if-no-files-found: ignore
+
+  e2e:
+    if: inputs.run-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run e2e suite
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/node-e2e@main
+        with:
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          browsers: ${{ inputs.e2e-browsers }}

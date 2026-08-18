@@ -1,0 +1,189 @@
+name: CI - Main (Node)
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Service name (used for image repo path and CD dispatch)'
+        type: string
+        required: true
+      node-version:
+        description: 'Node.js version to use'
+        type: string
+        default: '22'
+      sonar-project-key:
+        description: 'SonarQube project key'
+        type: string
+        required: true
+      sonar-project-name:
+        description: 'SonarQube project display name'
+        type: string
+        required: true
+      sonar-organization:
+        description: 'SonarQube Cloud organization key'
+        type: string
+        default: ''
+      sonar-host-url:
+        description: 'SonarQube server URL'
+        type: string
+        default: 'https://sonarcloud.io'
+      coverage-threshold:
+        description: 'Minimum line coverage percentage required (0-100)'
+        type: string
+        default: '70'
+      working-directory:
+        description: 'Directory containing the Node project (package.json)'
+        type: string
+        default: '.'
+      run-e2e:
+        description: 'Whether to run the Playwright e2e suite'
+        type: boolean
+        default: false
+      e2e-browsers:
+        description: 'Space-separated Playwright browsers to install (must match playwright.config.ts projects)'
+        type: string
+        default: 'chromium webkit'
+      image-registry:
+        description: 'Container registry hostname'
+        type: string
+        default: 'ghcr.io'
+      dockerfile-path:
+        description: 'Path to the Dockerfile'
+        type: string
+        default: './Dockerfile'
+      automation-app-id:
+        description: 'GitHub App ID used for cross-repo dispatch'
+        type: string
+        required: true
+      service-cd-repository:
+        description: 'Full owner/repo of the service CD repository. Defaults to <service-name>-cd in the same owner.'
+        type: string
+        default: ''
+      cd-environment:
+        description: 'Target environment to deploy on a default-branch build'
+        type: string
+        default: 'dev'
+    secrets:
+      sonar-token:
+        description: 'SonarQube authentication token'
+        required: true
+      automation-app-private-key:
+        description: 'GitHub App private key (PEM, base64-encoded not required)'
+        required: true
+    outputs:
+      image-digest:
+        description: 'Immutable OCI digest of the pushed image'
+        value: ${{ jobs.image.outputs.image-digest }}
+      image-tags:
+        description: 'Tags applied to the pushed image'
+        value: ${{ jobs.image.outputs.image-tags }}
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: ci-main-${{ inputs.service-name }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Node verify (lint, typecheck, tests + coverage check, build)
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/node-verify@main
+        with:
+          node-version: ${{ inputs.node-version }}
+          coverage-threshold: ${{ inputs.coverage-threshold }}
+          working-directory: ${{ inputs.working-directory }}
+
+      - name: Sonar analysis + quality gate
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/sonar-analysis-node@main
+        with:
+          sonar-host-url: ${{ inputs.sonar-host-url }}
+          sonar-token: ${{ secrets.sonar-token }}
+          sonar-project-key: ${{ inputs.sonar-project-key }}
+          sonar-project-name: ${{ inputs.sonar-project-name }}
+          sonar-organization: ${{ inputs.sonar-organization }}
+          working-directory: ${{ inputs.working-directory }}
+
+  e2e:
+    if: inputs.run-e2e
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run e2e suite
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/node-e2e@main
+        with:
+          node-version: ${{ inputs.node-version }}
+          working-directory: ${{ inputs.working-directory }}
+          browsers: ${{ inputs.e2e-browsers }}
+
+  image:
+    needs: [verify, e2e]
+    if: always() && needs.verify.result == 'success' && (needs.e2e.result == 'success' || needs.e2e.result == 'skipped')
+    runs-on: ubuntu-latest
+    outputs:
+      image-digest: ${{ steps.build.outputs.image-digest }}
+      image-tags: ${{ steps.build.outputs.image-tags }}
+      image-repository: ${{ steps.build.outputs.image-repository }}
+      short-sha: ${{ steps.sha.outputs.short }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=sha-$(echo ${{ github.sha }} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        id: build
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/docker-build-push@main
+        with:
+          service-name: ${{ inputs.service-name }}
+          registry: ${{ inputs.image-registry }}
+          image-tag-sha: ${{ steps.sha.outputs.short }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          dockerfile-path: ${{ inputs.dockerfile-path }}
+          build-context: ${{ inputs.working-directory }}
+
+  deploy-dev:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve target CD repository
+        id: cd-repo
+        run: |
+          REPO="${{ inputs.service-cd-repository }}"
+          if [ -z "$REPO" ]; then
+            REPO="${{ github.repository_owner }}/${{ inputs.service-name }}-cd"
+          fi
+          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
+
+      - name: Obtain GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        with:
+          app-id: ${{ inputs.automation-app-id }}
+          private-key: ${{ secrets.automation-app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ inputs.service-name }}-cd
+
+      - name: Dispatch CD deployment
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh workflow run deploy.yml \
+            --repo "${{ steps.cd-repo.outputs.repo }}" \
+            --ref main \
+            -f environment="${{ inputs.cd-environment }}" \
+            -f image_digest="${{ needs.image.outputs.image-digest }}" \
+            -f source_commit="${{ github.sha }}" \
+            -f image_tag="${{ needs.image.outputs.short-sha }}"

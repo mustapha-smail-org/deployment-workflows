@@ -1,0 +1,95 @@
+name: 'Node E2E'
+description: 'Run a Playwright end-to-end suite against a production build'
+
+inputs:
+  node-version:
+    description: 'Node.js version to use'
+    required: false
+    default: '22'
+  working-directory:
+    description: 'Directory containing the Node project (package.json)'
+    required: false
+    default: '.'
+  install-command:
+    description: 'Command used to install dependencies'
+    required: false
+    default: 'npm ci'
+  browsers:
+    description: 'Space-separated Playwright browsers to install (must match playwright.config.ts projects)'
+    required: false
+    default: 'chromium webkit'
+  test-command:
+    description: 'Command used to run the e2e suite'
+    required: false
+    default: 'npm run test:e2e'
+  report-path:
+    description: 'Path to the Playwright HTML report, uploaded as an artifact on failure'
+    required: false
+    default: 'playwright-report'
+  results-path:
+    description: 'Path to Playwright test-results (traces/screenshots), uploaded as an artifact on failure'
+    required: false
+    default: 'test-results'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+        cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.install-command }}
+
+    - name: Resolve Playwright version
+      id: pw-version
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        VERSION=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Playwright browsers
+      id: pw-cache
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ steps.pw-version.outputs.version }}-${{ inputs.browsers }}
+
+    - name: Install Playwright browsers
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npx playwright install --with-deps ${{ inputs.browsers }}
+      if: steps.pw-cache.outputs.cache-hit != 'true'
+
+    - name: Install Playwright OS dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: npx playwright install-deps ${{ inputs.browsers }}
+      if: steps.pw-cache.outputs.cache-hit == 'true'
+
+    - name: Run e2e suite
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.test-command }}
+
+    - name: Upload Playwright report
+      if: failure()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: playwright-report
+        path: ${{ inputs.working-directory }}/${{ inputs.report-path }}/
+        if-no-files-found: ignore
+
+    - name: Upload Playwright test results
+      if: failure()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: playwright-test-results
+        path: ${{ inputs.working-directory }}/${{ inputs.results-path }}/
+        if-no-files-found: ignore

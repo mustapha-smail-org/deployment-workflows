@@ -1,0 +1,117 @@
+name: 'Node Verify'
+description: 'Install, lint, typecheck, run unit tests with coverage check, and build a Node project'
+
+inputs:
+  node-version:
+    description: 'Node.js version to use'
+    required: false
+    default: '22'
+  working-directory:
+    description: 'Directory containing the Node project (package.json)'
+    required: false
+    default: '.'
+  coverage-threshold:
+    description: 'Minimum line coverage percentage required (0-100)'
+    required: false
+    default: '70'
+  install-command:
+    description: 'Command used to install dependencies'
+    required: false
+    default: 'npm ci'
+  lint-command:
+    description: 'Command used to lint. Set to an empty string to skip.'
+    required: false
+    default: 'npm run lint'
+  format-check-command:
+    description: 'Command used to check formatting. Set to an empty string to skip.'
+    required: false
+    default: 'npm run format:check'
+  typecheck-command:
+    description: 'Command used to typecheck. Set to an empty string to skip.'
+    required: false
+    default: 'npm run typecheck'
+  test-command:
+    description: >-
+      Command used to run unit tests with coverage. Must write both
+      coverage/coverage-summary.json (for this action's output) and
+      coverage/lcov.info (for sonar-analysis-node) — see WORKFLOW_CONTRACTS.md.
+    required: false
+    default: 'npm run test:coverage'
+  build-command:
+    description: 'Command used to produce the production build. Set to an empty string to skip.'
+    required: false
+    default: 'npm run build'
+
+outputs:
+  coverage-percentage:
+    description: 'Line coverage percentage reported by the coverage summary'
+    value: ${{ steps.coverage.outputs.percentage }}
+  dist-path:
+    description: 'Path to the production build output'
+    value: ${{ inputs.working-directory }}/dist
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+        cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.install-command }}
+
+    - name: Lint
+      if: inputs.lint-command != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.lint-command }}
+
+    - name: Format check
+      if: inputs.format-check-command != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.format-check-command }}
+
+    - name: Typecheck
+      if: inputs.typecheck-command != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.typecheck-command }}
+
+    - name: Run tests with coverage
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.test-command }}
+
+    - name: Enforce coverage threshold
+      id: coverage
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        REPORT="coverage/coverage-summary.json"
+        if [ ! -f "$REPORT" ]; then
+          echo "::error::Coverage summary not found at ${REPORT}. Ensure the test runner's coverage reporter includes 'json-summary'."
+          exit 1
+        fi
+
+        PERCENTAGE=$(node -p "require('./${REPORT}').total.lines.pct")
+        echo "percentage=${PERCENTAGE}" >> "$GITHUB_OUTPUT"
+        echo "Line coverage: ${PERCENTAGE}%"
+
+        THRESHOLD="${{ inputs.coverage-threshold }}"
+        BELOW=$(node -p "${PERCENTAGE} < ${THRESHOLD}")
+        if [ "$BELOW" = "true" ]; then
+          echo "::error::Line coverage ${PERCENTAGE}% is below the required threshold of ${THRESHOLD}%"
+          exit 1
+        fi
+
+    - name: Build
+      if: inputs.build-command != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: ${{ inputs.build-command }}
