@@ -33,7 +33,7 @@ JaCoCo threshold violations because the check is bound to the `verify` phase.
 
 ---
 
-### `.github/actions/sonar-analysis`
+### `.github/actions/sonar-analysis-maven`
 
 Runs the Sonar Maven plugin by fully-qualified coordinates
 (`org.sonarsource.scanner.maven:sonar-maven-plugin:<version>:sonar`) and blocks on
@@ -114,7 +114,7 @@ it does, for post-mortem without re-running.
 ### `.github/actions/sonar-analysis-node`
 
 Runs `SonarSource/sonarqube-scan-action` and blocks on the quality gate. Unlike
-`sonar-analysis` (Java), structural project config (`sonar.sources`, `sonar.tests`,
+`sonar-analysis-maven` (Java), structural project config (`sonar.sources`, `sonar.tests`,
 `sonar.exclusions`, `sonar.javascript.lcov.reportPaths`) is **not** passed as CLI
 args here — it lives in a `sonar-project.properties` file in the target repo,
 because there's no Maven-equivalent single entry point (`pom.xml`) this action could
@@ -168,7 +168,7 @@ Builds and pushes an image tagged by commit SHA (plus optional extra mutable tag
 
 ## Reusable Workflows
 
-### `.github/workflows/ci-pr.yml`
+### `.github/workflows/ci-pr-java.yml`
 
 Trigger: called from a service's `pull_request` workflow. **Never publishes an
 image and never touches deployment credentials.**
@@ -185,7 +185,7 @@ image and never touches deployment credentials.**
 
 ---
 
-### `.github/workflows/ci-main.yml`
+### `.github/workflows/ci-main-java.yml`
 
 Trigger: called from a service's `push: branches: [main]` workflow.
 
@@ -213,7 +213,7 @@ default-branch build should always complete and record its artifact).
 ### `.github/workflows/ci-pr-node.yml`
 
 Trigger: called from a service's `pull_request` workflow. **Never publishes an
-image and never touches deployment credentials.** Node analogue of `ci-pr.yml`.
+image and never touches deployment credentials.** Node analogue of `ci-pr-java.yml`.
 
 Sequence: `verify` (node-verify + sonar-analysis-node, one job) and `e2e`
 (node-e2e) run **in parallel** — the e2e suite doesn't depend on the Sonar quality
@@ -234,7 +234,7 @@ gate, so there's no reason to queue it behind that poll.
 ### `.github/workflows/ci-main-node.yml`
 
 Trigger: called from a service's `push: branches: [main]` workflow. Node analogue
-of `ci-main.yml`.
+of `ci-main-java.yml`.
 
 Sequence: `verify` (node-verify + sonar-analysis-node) and `e2e` (node-e2e, if
 `run-e2e`) → `image` (docker-build-push, tag `sha-<short-sha>`, waits on both
@@ -258,7 +258,7 @@ re-running it here would only add latency ahead of the dev deploy), `e2e-browser
 **Permissions granted:** `contents: read`, `packages: write`, `id-token: write`.
 
 **Concurrency:** `ci-main-<service-name>`, does not cancel in-progress runs — same
-convention as `ci-main.yml`.
+convention as `ci-main-java.yml`.
 
 **`image` job's `if:` gate:** `always() && needs.verify.result == 'success' &&
 (needs.e2e.result == 'success' || needs.e2e.result == 'skipped')`. Needed because

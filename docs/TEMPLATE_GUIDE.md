@@ -6,7 +6,7 @@ duplicating build/test/deploy logic.
 
 Two stacks are supported today:
 
-- **Java/Spring Boot** — Maven build, JaCoCo coverage, `ci-pr.yml` / `ci-main.yml`.
+- **Java/Spring Boot** — Maven build, JaCoCo coverage, `ci-pr-java.yml` / `ci-main-java.yml`.
   Reference implementation: `data-ingestion` + `data-ingestion-cd`.
 - **Node/Vite (SPA)** — npm build, Vitest coverage, `ci-pr-node.yml` /
   `ci-main-node.yml`. Reference implementation: `frontend` + `frontend-cd`.
@@ -94,7 +94,7 @@ jobs:
   ci:
     permissions:
       contents: read
-    uses: mustapha-smail-org/deployment-workflows/.github/workflows/ci-pr.yml@main
+    uses: mustapha-smail-org/deployment-workflows/.github/workflows/ci-pr-java.yml@main
     with:
       java-version: '21'
       sonar-project-key: <service-name>
@@ -119,7 +119,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
-    uses: mustapha-smail-org/deployment-workflows/.github/workflows/ci-main.yml@main
+    uses: mustapha-smail-org/deployment-workflows/.github/workflows/ci-main-java.yml@main
     with:
       service-name: <service-name>
       java-version: '21'
@@ -281,7 +281,7 @@ the two steps together.
 
 ## 3a. Coverage Threshold Convention (Java)
 
-`ci-pr.yml` and `ci-main.yml` pass `-Djacoco.line.coverage.minimum=<ratio>` to
+`ci-pr-java.yml` and `ci-main-java.yml` pass `-Djacoco.line.coverage.minimum=<ratio>` to
 `mvnw verify` (ratio = `jacoco-threshold / 100`). Your service's `pom.xml` must define
 a JaCoCo `check` execution bound to `verify` that reads this property:
 

@@ -92,7 +92,7 @@ jobs:
   ci:
     permissions:
       contents: read
-    uses: ${TEMPLATES_REPO}/.github/workflows/ci-pr.yml@${TEMPLATES_REF}
+    uses: ${TEMPLATES_REPO}/.github/workflows/ci-pr-java.yml@${TEMPLATES_REF}
     with:
       java-version: '${JAVA_VERSION}'
       sonar-project-key: ${SONAR_KEY}
@@ -115,7 +115,7 @@ jobs:
       contents: read
       packages: write
       id-token: write
-    uses: ${TEMPLATES_REPO}/.github/workflows/ci-main.yml@${TEMPLATES_REF}
+    uses: ${TEMPLATES_REPO}/.github/workflows/ci-main-java.yml@${TEMPLATES_REF}
     with:
       service-name: ${SERVICE_NAME}
       java-version: '${JAVA_VERSION}'
