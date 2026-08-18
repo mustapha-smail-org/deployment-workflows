@@ -37,6 +37,14 @@ repository are documented here. Follows [Keep a Changelog](https://keepachangelo
   - `docs/WORKFLOW_CONTRACTS.md` updated with full input/output reference for
     every new action and workflow.
 
+### Added
+- `ci-main-java.yml`: new `skip-cd-dispatch` input (boolean, default `false`).
+  Set `true` as a temporary bridge for a service whose `<service-name>-cd` repo
+  doesn't exist yet — without it, `deploy-dev` fails trying to dispatch a
+  workflow run in a nonexistent repo (`api-gateway` and `discovery-server` hit
+  this after onboarding, since neither has a `-cd` repo yet). Every other
+  input is unaffected; `verify` and `image` still run normally.
+
 ### Changed — BREAKING
 - Renamed `ci-pr.yml` → `ci-pr-java.yml` and `ci-main.yml` → `ci-main-java.yml`,
   and `.github/actions/sonar-analysis` → `.github/actions/sonar-analysis-maven`,
