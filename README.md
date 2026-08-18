@@ -13,14 +13,19 @@ CityPulse repo.
 ```
 .github/
   actions/
-    maven-verify/        Maven build + tests + JaCoCo coverage check
-    sonar-analysis/       SonarQube analysis + quality gate
-    docker-build-push/    Build & push an image tagged by commit SHA
+    maven-verify/          Java: Maven build + tests + JaCoCo coverage check
+    sonar-analysis/         Java: SonarQube analysis + quality gate
+    node-verify/            Node: install, lint, typecheck, tests + coverage check, build
+    node-e2e/               Node: Playwright e2e suite against a production build
+    sonar-analysis-node/    Node: SonarQube analysis + quality gate
+    docker-build-push/      Stack-agnostic: build & push an image tagged by commit SHA
   workflows/
-    ci-pr.yml              Reusable: pull-request verification (no publish)
-    ci-main.yml             Reusable: default-branch build, image publish, dev deploy dispatch
-    ci-release.yml          Reusable: semantic tag promotion (re-tags existing digest, no rebuild)
-    deploy-render.yml       Reusable: Render deployment adapter
+    ci-pr.yml               Reusable (Java): pull-request verification (no publish)
+    ci-main.yml              Reusable (Java): default-branch build, image publish, dev deploy dispatch
+    ci-pr-node.yml           Reusable (Node): pull-request verification (no publish)
+    ci-main-node.yml         Reusable (Node): default-branch build, image publish, dev deploy dispatch
+    ci-release.yml           Reusable, stack-agnostic: semantic tag promotion (re-tags existing digest, no rebuild)
+    deploy-render.yml        Reusable, stack-agnostic: Render deployment adapter
 contracts/
   service-schema.json       Schema for a service CD repo's service.yaml
   environment-schema.json   Schema for a service CD repo's environments/*.yaml
@@ -32,15 +37,21 @@ scripts/
   bootstrap-service.sh       Scaffold a new service repo's thin wrapper workflows
 ```
 
+`ci-release.yml`, `deploy-render.yml`, and `docker-build-push` are deliberately
+unsuffixed: none of the three has any Maven/Node-specific logic (they operate purely
+on an OCI image and its digest), so both stacks call the same files.
+
 ## Quick start (using these templates from a service repo)
 
 See `docs/TEMPLATE_GUIDE.md` for the full walkthrough. In short, a service repo adds
 three ~15-line workflow files that each `uses:` one of the reusable workflows above,
 and its `-cd` repo adds one `deploy.yml` that `uses: deploy-render.yml`. No Maven,
-Sonar, or Docker logic is duplicated per service.
+Node, Sonar, or Docker logic is duplicated per service.
 
 Reference implementation: `data-ingestion` (application) +
-`data-ingestion-cd` (desired state).
+`data-ingestion-cd` (desired state), for the Java/Spring stack. A Node/Vite
+reference (`frontend` + `frontend-cd`) is being onboarded next — see
+`docs/TEMPLATE_GUIDE.md` for the Node-specific walkthrough in the meantime.
 
 ## Design principles
 
