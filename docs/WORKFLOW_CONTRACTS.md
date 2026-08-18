@@ -189,15 +189,19 @@ image and never touches deployment credentials.**
 
 Trigger: called from a service's `push: branches: [main]` workflow.
 
-Sequence: `verify` (maven-verify + sonar-analysis) → `image` (docker-build-push,
+Sequence: `verify` (maven-verify + sonar-analysis-maven) → `image` (docker-build-push,
 tag `sha-<short-sha>`) → `deploy-dev` (GitHub App token → `gh workflow run deploy.yml`
-in the service's CD repo, environment defaults to `dev`).
+in the service's CD repo, environment defaults to `dev`; skipped entirely if
+`skip-cd-dispatch` is `true`).
 
 **Inputs:** `service-name` (required), `java-version`, `sonar-project-key`
 (required), `sonar-project-name` (required), `sonar-organization`, `sonar-host-url`,
 `jacoco-threshold`, `working-directory`, `image-registry`, `dockerfile-path`,
 `automation-app-id` (required), `service-cd-repository` (defaults to
-`<owner>/<service-name>-cd`), `cd-environment` (default `dev`).
+`<owner>/<service-name>-cd`), `cd-environment` (default `dev`), `skip-cd-dispatch`
+(default `false` — set `true` as a temporary bridge before `<service-name>-cd`
+exists; without it `deploy-dev` fails trying to dispatch a workflow run in a repo
+that doesn't exist yet).
 
 **Secrets:** `sonar-token` (required), `automation-app-private-key` (required).
 

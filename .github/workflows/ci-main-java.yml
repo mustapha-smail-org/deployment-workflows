@@ -55,6 +55,15 @@ on:
         description: 'Target environment to deploy on a default-branch build'
         type: string
         default: 'dev'
+      skip-cd-dispatch:
+        description: >-
+          Skip the deploy-dev job entirely. Set true only as a temporary
+          bridge before <service-name>-cd exists yet — without it,
+          deploy-dev fails trying to dispatch a workflow in a repo that
+          doesn't exist. Remove the input (or set it back to false) once
+          the -cd repo is created.
+        type: boolean
+        default: false
     secrets:
       sonar-token:
         description: 'SonarQube authentication token'
@@ -134,6 +143,7 @@ jobs:
 
   deploy-dev:
     needs: image
+    if: ${{ !inputs.skip-cd-dispatch }}
     runs-on: ubuntu-latest
     steps:
       - name: Resolve target CD repository
