@@ -45,16 +45,22 @@ runs:
         SONAR_HOST_URL: ${{ inputs.sonar-host-url }}
       with:
         projectBaseDir: ${{ inputs.working-directory }}
-        # sonarqube-scan-action tokenizes this string on whitespace (see its
-        # argStringToArray, @actions/exec) and only double quotes group a
-        # token — every value is quoted here, not just sonar-project-name,
-        # since an unquoted multi-word value (e.g. "CityPulse Frontend")
-        # silently splits into two args and the second is rejected by
-        # sonar-scanner as "Unrecognized option".
+        # sonarqube-scan-action tokenizes this string with its own regex
+        # (parseArgsStringToArgv, the `string-argv` package) rather than a
+        # real shell, and its quote-stripping only kicks in when a token is
+        # quoted from its very first character. A token like
+        # `-Dsonar.projectName="CityPulse Frontend"` (quotes only around the
+        # value) still gets treated as one token — so it doesn't split on
+        # the embedded space — but the wrapping quote CHARACTERS are kept
+        # literally in the property value passed to sonar-scanner, which
+        # then rejected an org key of `"mustapha-smail-org"` (quotes and
+        # all) as nonexistent. Quoting the *entire* `-Dkey=value` token
+        # instead (open quote before `-D`) hits the tokenizer's
+        # whole-token-quoted branch, which does strip the wrapping quotes.
         args: >
-          -Dsonar.projectKey="${{ inputs.sonar-project-key }}"
-          -Dsonar.projectName="${{ inputs.sonar-project-name }}"
-          ${{ inputs.sonar-organization != '' && format('-Dsonar.organization="{0}"', inputs.sonar-organization) || '' }}
+          "-Dsonar.projectKey=${{ inputs.sonar-project-key }}"
+          "-Dsonar.projectName=${{ inputs.sonar-project-name }}"
+          ${{ inputs.sonar-organization != '' && format('"-Dsonar.organization={0}"', inputs.sonar-organization) || '' }}
           -Dsonar.qualitygate.wait=true
 
     - name: Report quality gate status
