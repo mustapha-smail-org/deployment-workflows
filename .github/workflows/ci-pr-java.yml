@@ -1,4 +1,4 @@
-name: CI - Pull Request
+name: CI - Pull Request (Java)
 
 on:
   workflow_call:
@@ -61,7 +61,7 @@ jobs:
           working-directory: ${{ inputs.working-directory }}
 
       - name: Sonar analysis + quality gate
-        uses: mustapha-smail-org/deployment-workflows/.github/actions/sonar-analysis@main
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/sonar-analysis-maven@main
         with:
           sonar-host-url: ${{ inputs.sonar-host-url }}
           sonar-token: ${{ secrets.sonar-token }}

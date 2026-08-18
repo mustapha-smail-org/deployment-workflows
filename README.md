@@ -13,15 +13,15 @@ CityPulse repo.
 ```
 .github/
   actions/
-    maven-verify/          Java: Maven build + tests + JaCoCo coverage check
-    sonar-analysis/         Java: SonarQube analysis + quality gate
+    maven-verify/           Java: Maven build + tests + JaCoCo coverage check
+    sonar-analysis-maven/   Java: SonarQube analysis + quality gate
     node-verify/            Node: install, lint, typecheck, tests + coverage check, build
     node-e2e/               Node: Playwright e2e suite against a production build
     sonar-analysis-node/    Node: SonarQube analysis + quality gate
     docker-build-push/      Stack-agnostic: build & push an image tagged by commit SHA
   workflows/
-    ci-pr.yml               Reusable (Java): pull-request verification (no publish)
-    ci-main.yml              Reusable (Java): default-branch build, image publish, dev deploy dispatch
+    ci-pr-java.yml           Reusable (Java): pull-request verification (no publish)
+    ci-main-java.yml         Reusable (Java): default-branch build, image publish, dev deploy dispatch
     ci-pr-node.yml           Reusable (Node): pull-request verification (no publish)
     ci-main-node.yml         Reusable (Node): default-branch build, image publish, dev deploy dispatch
     ci-release.yml           Reusable, stack-agnostic: semantic tag promotion (re-tags existing digest, no rebuild)
@@ -48,10 +48,8 @@ three ~15-line workflow files that each `uses:` one of the reusable workflows ab
 and its `-cd` repo adds one `deploy.yml` that `uses: deploy-render.yml`. No Maven,
 Node, Sonar, or Docker logic is duplicated per service.
 
-Reference implementation: `data-ingestion` (application) +
-`data-ingestion-cd` (desired state), for the Java/Spring stack. A Node/Vite
-reference (`frontend` + `frontend-cd`) is being onboarded next — see
-`docs/TEMPLATE_GUIDE.md` for the Node-specific walkthrough in the meantime.
+Reference implementations: `data-ingestion` + `data-ingestion-cd` for the
+Java/Spring stack, and `frontend` + `frontend-cd` for the Node/Vite stack.
 
 ## Design principles
 
@@ -60,7 +58,8 @@ reference (`frontend` + `frontend-cd`) is being onboarded next — see
 - **Immutable artifacts.** Deployments always resolve to an OCI digest
   (`sha256:...`), never a mutable tag like `main` or `latest`.
 - **Build once, deploy many.** `ci-release.yml` never rebuilds — it re-tags the
-  digest that `ci-main.yml` already published for that commit.
+  digest that `ci-main-java.yml`/`ci-main-node.yml` already published for that
+  commit.
 - **Least privilege.** Cross-repo dispatch uses a scoped GitHub App token, not a
   broad PAT; each workflow declares only the `permissions` it needs.
 

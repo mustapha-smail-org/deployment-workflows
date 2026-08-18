@@ -20,7 +20,7 @@ repository are documented here. Follows [Keep a Changelog](https://keepachangelo
     a Node/TypeScript project, structural config sourced from the caller's own
     `sonar-project.properties`).
   - Reusable workflows `ci-pr-node.yml` and `ci-main-node.yml`, mirroring
-    `ci-pr.yml`/`ci-main.yml`'s shape (same permissions model, same
+    `ci-pr-java.yml`/`ci-main-java.yml`'s shape (same permissions model, same
     `service-cd-repository`/`cd-environment` conventions, same
     default-branch dev-deploy dispatch). Both add an e2e stage (`run-e2e`,
     default `true` on PR / `false` on main) that runs in parallel with the
@@ -36,3 +36,18 @@ repository are documented here. Follows [Keep a Changelog](https://keepachangelo
     build-once-promote-everywhere model.
   - `docs/WORKFLOW_CONTRACTS.md` updated with full input/output reference for
     every new action and workflow.
+
+### Changed — BREAKING
+- Renamed `ci-pr.yml` → `ci-pr-java.yml` and `ci-main.yml` → `ci-main-java.yml`,
+  and `.github/actions/sonar-analysis` → `.github/actions/sonar-analysis-maven`,
+  to sit symmetrically alongside `ci-pr-node.yml`/`ci-main-node.yml`/
+  `sonar-analysis-node` now that a second stack exists. Their `name:` fields also
+  gained a `(Java)`/`(Node)` suffix for symmetry in the Actions UI.
+  `ci-release.yml`, `deploy-render.yml`, and `docker-build-push` are unaffected —
+  none of the three is stack-specific, so neither name nor behavior changed.
+  **Migration:** every caller's `pr.yml`/`main.yml` must update its `uses:` line
+  (`ci-pr.yml@main` → `ci-pr-java.yml@main`, `ci-main.yml@main` →
+  `ci-main-java.yml@main`) — done in the same change for all four Java callers
+  (`data-ingestion`, `catalog-service`, `api-gateway`, `discovery-server`).
+  `scripts/bootstrap-service.sh` and the docs were updated to the new names in
+  the same commit.
