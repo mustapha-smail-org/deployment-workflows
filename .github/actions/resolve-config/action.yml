@@ -1,0 +1,42 @@
+name: 'Resolve Config'
+description: >-
+  Substitute %%SECRET:NAME%% placeholders in a config file with the value of the
+  matching SECRET_<NAME> environment variable, failing if any placeholder is
+  left unresolved. The SECRET_* variables are supplied by the caller via env.
+
+inputs:
+  template:
+    description: 'Path to the config file containing %%SECRET:NAME%% placeholders'
+    required: true
+  output:
+    description: 'Path to write the resolved file'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        TEMPLATE: ${{ inputs.template }}
+        OUTPUT: ${{ inputs.output }}
+      run: |
+        set -euo pipefail
+
+        [ -f "$TEMPLATE" ] || { echo "::error::template not found: $TEMPLATE"; exit 1; }
+
+        RESOLVED=$(cat "$TEMPLATE")
+        for VAR_NAME in $(compgen -v | grep '^SECRET_' || true); do
+          TOKEN="${VAR_NAME#SECRET_}"
+          VALUE="${!VAR_NAME}"
+          RESOLVED="${RESOLVED//%%SECRET:${TOKEN}%%/${VALUE}}"
+        done
+
+        if grep -q '%%SECRET:' <<<"$RESOLVED"; then
+          echo "::error::unresolved placeholder(s) in ${TEMPLATE} — is the matching SECRET_<NAME> env var set?"
+          grep -o '%%SECRET:[^%]*%%' <<<"$RESOLVED" | sort -u
+          exit 1
+        fi
+
+        mkdir -p "$(dirname "$OUTPUT")"
+        printf '%s' "$RESOLVED" > "$OUTPUT"
+        echo "resolved ${TEMPLATE} -> ${OUTPUT}"

@@ -10,6 +10,9 @@ repository are documented here. Follows [Keep a Changelog](https://keepachangelo
   composite actions.
 - Reusable workflows `ci-pr.yml`, `ci-main.yml`, `ci-release.yml`.
 - Render deployment adapter `deploy-render.yml`.
+- VPS deployment adapter `deploy-vps.yml` (SSH to the host, runs
+  `scripts/deploy-service.sh`), plus `resolve-config` (substitute
+  `%%SECRET:NAME%%` placeholders) and `vps-ssh-setup` composite actions.
 - `service-schema.json` and `environment-schema.json` contracts.
 - Template guide, workflow contracts reference, and new-provider guide.
 - `scripts/bootstrap-service.sh` to scaffold a new service's thin wrapper workflows.
