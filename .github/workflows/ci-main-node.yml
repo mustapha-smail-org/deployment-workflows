@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       service-name:
-        description: 'Service name (used for image repo path and CD dispatch)'
+        description: 'Service name (used for the image repo path)'
         type: string
         required: true
       node-version:
@@ -51,24 +51,9 @@ on:
         description: 'Path to the Dockerfile'
         type: string
         default: './Dockerfile'
-      automation-app-id:
-        description: 'GitHub App ID used for cross-repo dispatch'
-        type: string
-        required: true
-      service-cd-repository:
-        description: 'Full owner/repo of the service CD repository. Defaults to <service-name>-cd in the same owner.'
-        type: string
-        default: ''
-      cd-environment:
-        description: 'Target environment to deploy on a default-branch build'
-        type: string
-        default: 'dev'
     secrets:
       sonar-token:
         description: 'SonarQube authentication token'
-        required: true
-      automation-app-private-key:
-        description: 'GitHub App private key (PEM, base64-encoded not required)'
         required: true
     outputs:
       image-digest:
@@ -154,36 +139,3 @@ jobs:
           dockerfile-path: ${{ inputs.dockerfile-path }}
           build-context: ${{ inputs.working-directory }}
 
-  deploy-dev:
-    needs: image
-    runs-on: ubuntu-latest
-    steps:
-      - name: Resolve target CD repository
-        id: cd-repo
-        run: |
-          REPO="${{ inputs.service-cd-repository }}"
-          if [ -z "$REPO" ]; then
-            REPO="${{ github.repository_owner }}/${{ inputs.service-name }}-cd"
-          fi
-          echo "repo=${REPO}" >> "$GITHUB_OUTPUT"
-
-      - name: Obtain GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
-        with:
-          app-id: ${{ inputs.automation-app-id }}
-          private-key: ${{ secrets.automation-app-private-key }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ inputs.service-name }}-cd
-
-      - name: Dispatch CD deployment
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          gh workflow run deploy.yml \
-            --repo "${{ steps.cd-repo.outputs.repo }}" \
-            --ref main \
-            -f environment="${{ inputs.cd-environment }}" \
-            -f image_digest="${{ needs.image.outputs.image-digest }}" \
-            -f source_commit="${{ github.sha }}" \
-            -f image_tag="${{ needs.image.outputs.short-sha }}"
