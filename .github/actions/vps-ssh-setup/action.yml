@@ -1,0 +1,28 @@
+name: 'VPS SSH Setup'
+description: >-
+  Write the VPS deploy key and known_hosts so subsequent ssh/scp commands can
+  reach the box non-interactively. Use the key with:
+  ssh -i ~/.ssh/vps_deploy_key -o IdentitiesOnly=yes <user>@<host>
+
+inputs:
+  ssh-private-key:
+    description: 'Private key for the VPS deploy user'
+    required: true
+  known-hosts:
+    description: 'known_hosts entry (host key) for the VPS'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SSH_KEY: ${{ inputs.ssh-private-key }}
+        KNOWN_HOSTS: ${{ inputs.known-hosts }}
+      run: |
+        set -euo pipefail
+        install -d -m 700 ~/.ssh
+        printf '%s\n' "$SSH_KEY" > ~/.ssh/vps_deploy_key
+        chmod 600 ~/.ssh/vps_deploy_key
+        printf '%s\n' "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
+        chmod 644 ~/.ssh/known_hosts

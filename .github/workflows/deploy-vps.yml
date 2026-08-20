@@ -1,0 +1,93 @@
+name: Deploy - VPS
+
+on:
+  workflow_call:
+    inputs:
+      service-name:
+        description: 'Compose service on the box (catalog-service | data-ingestion | frontend)'
+        type: string
+        required: true
+      environment:
+        description: 'Target environment (production or staging)'
+        type: string
+        required: true
+      image-digest:
+        description: 'Immutable OCI image digest to deploy (sha256:...)'
+        type: string
+        required: true
+    secrets:
+      vps-host:
+        required: true
+      vps-user:
+        required: true
+      vps-ssh-private-key:
+        required: true
+      vps-known-hosts:
+        required: true
+    outputs:
+      deployment-status:
+        description: 'Result of the deployment (success or failed)'
+        value: ${{ jobs.deploy.outputs.deployment-status }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-vps-${{ inputs.service-name }}-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    outputs:
+      deployment-status: ${{ steps.summary.outputs.status }}
+    steps:
+      - name: Validate digest
+        run: |
+          if [[ ! "${{ inputs.image-digest }}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::image-digest must be an immutable sha256 digest, got: ${{ inputs.image-digest }}"
+            exit 1
+          fi
+
+      - name: Map environment to box directory
+        id: env
+        run: |
+          case "${{ inputs.environment }}" in
+            production) echo "name=prod"    >> "$GITHUB_OUTPUT" ;;
+            staging)    echo "name=staging" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::VPS deploy supports 'production' or 'staging', got: ${{ inputs.environment }}"; exit 1 ;;
+          esac
+
+      - name: Set up SSH to the VPS
+        uses: mustapha-smail-org/deployment-workflows/.github/actions/vps-ssh-setup@main
+        with:
+          ssh-private-key: ${{ secrets.vps-ssh-private-key }}
+          known-hosts: ${{ secrets.vps-known-hosts }}
+
+      # The resolved config is already on the box (the caller's push-config job
+      # scp'd it there). deploy-service.sh re-pins the digest, pulls, recreates
+      # only this service, health-gates it, and rolls the pin back on failure.
+      - name: Deploy on the VPS
+        env:
+          VPS_HOST: ${{ secrets.vps-host }}
+          VPS_USER: ${{ secrets.vps-user }}
+        run: |
+          ssh -i ~/.ssh/vps_deploy_key -o IdentitiesOnly=yes "${VPS_USER}@${VPS_HOST}" \
+            "cd /opt/citypulse/platform-infrastructure && scripts/deploy-service.sh '${{ steps.env.outputs.name }}' '${{ inputs.service-name }}' '${{ inputs.image-digest }}'"
+
+      - name: Emit deployment summary
+        id: summary
+        if: always()
+        run: |
+          STATUS=$([ "${{ job.status }}" = "success" ] && echo success || echo failed)
+          echo "status=${STATUS}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## VPS Deployment"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Service | ${{ inputs.service-name }} |"
+            echo "| Environment | ${{ inputs.environment }} (${{ steps.env.outputs.name }}) |"
+            echo "| Digest | ${{ inputs.image-digest }} |"
+            echo "| Status | ${STATUS} |"
+          } >> "$GITHUB_STEP_SUMMARY"
